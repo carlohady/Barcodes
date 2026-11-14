@@ -3,19 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Upload product photos</title>
+<title>Add product</title>
 <style>
   body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px}
-  button,input[type=text]{width:100%;font-size:18px;padding:14px;margin:8px 0;box-sizing:border-box}
-  #list div{padding:6px 0;border-bottom:1px solid #ddd}
-  .ok{color:green}.err{color:red}
+  button{width:100%;font-size:18px;padding:16px;margin:6px 0;box-sizing:border-box}
+  .done{background:#d8f5d8}
+  img{height:40px;vertical-align:middle;margin-left:8px;border-radius:4px}
+  #send{background:#111;color:#fff;margin-top:14px}
+  #send:disabled{background:#999}
+  #list div{padding:8px 0;border-bottom:1px solid #ddd}
+  .ok{color:green}.warn{color:#b36b00}.err{color:red}
 </style>
 </head>
 <body>
-<h2>Upload product photos</h2>
-<input type="file" id="f" accept="image/*" capture="environment" multiple hidden>
-<button id="pick">📷 Take photo(s)</button>
-<input type="text" id="note" placeholder="Note (optional)">
+<h2>Add a product</h2>
+<p>Take 3 photos, then Send.</p>
+<input type="file" id="f1" accept="image/*" capture="environment" hidden>
+<input type="file" id="f2" accept="image/*" capture="environment" hidden>
+<input type="file" id="f3" accept="image/*" capture="environment" hidden>
+<button id="b1">1. 📷 Front (product name)</button>
+<button id="b2">2. 📷 Barcode</button>
+<button id="b3">3. 📷 Nutrition facts</button>
+<button id="send" disabled>Send</button>
 <div id="list"></div>
 
 <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
@@ -25,13 +34,20 @@ const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 const KEY = "6b18e1c88bbd39f66d98c211";
 const H = {apikey: ANON, Authorization: "Bearer " + ANON, "x-upload-key": KEY};
 
-async function readBarcode(file) {
-  // downscale big phone photos, then try native detector, then ZXing
+const shots = [null, null, null];   // resized jpeg blobs
+let barcodeClient = null;
+
+async function toCanvas(file) {
   const bmp = await createImageBitmap(file);
   const sc = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
   const c = document.createElement("canvas");
   c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
   c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return c;
+}
+const blobOf = c => new Promise(r => c.toBlob(r, "image/jpeg", 0.85));
+
+async function readBarcode(c) {
   try {
     if ("BarcodeDetector" in window) {
       const r = await new BarcodeDetector().detect(c);
@@ -41,40 +57,66 @@ async function readBarcode(file) {
   try {
     const hints = new Map();
     hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    const reader = new ZXing.BrowserMultiFormatReader(hints);
-    const res = await reader.decodeFromImageUrl(c.toDataURL("image/jpeg", 0.9));
+    const res = await new ZXing.BrowserMultiFormatReader(hints).decodeFromImageUrl(c.toDataURL("image/jpeg", 0.9));
     return res.getText();
   } catch (e) { return null; }
 }
 
-const f = document.getElementById("f"), list = document.getElementById("list");
-document.getElementById("pick").onclick = () => f.click();
+const send = document.getElementById("send"), list = document.getElementById("list");
+[1, 2, 3].forEach(n => {
+  const input = document.getElementById("f" + n), btn = document.getElementById("b" + n);
+  const label = btn.textContent;
+  btn.onclick = () => input.click();
+  input.onchange = async () => {
+    if (!input.files[0]) return;
+    const c = await toCanvas(input.files[0]);
+    shots[n - 1] = await blobOf(c);
+    if (n === 2) barcodeClient = await readBarcode(c);
+    btn.className = "done";
+    btn.innerHTML = label.replace("📷", "✓") + '<img src="' + URL.createObjectURL(shots[n - 1]) + '">';
+    send.disabled = !shots.every(Boolean);
+    input.value = "";
+  };
+});
 
-f.onchange = async () => {
-  const note = document.getElementById("note").value.trim() || null;
-  for (const file of f.files) {
-    const row = document.createElement("div");
-    row.textContent = "Uploading " + file.name + "…";
-    list.prepend(row);
-    try {
-      const barcode = await readBarcode(file);
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "." + ext;
-      let r = await fetch(`${URL_}/storage/v1/object/partner-uploads/${path}`, {
-        method: "POST", headers: {...H, "Content-Type": file.type || "image/jpeg"}, body: file
-      });
-      if (!r.ok) throw new Error("storage " + r.status + " " + await r.text());
-      r = await fetch(`${URL_}/rest/v1/partner_uploads`, {
-        method: "POST", headers: {...H, "Content-Type": "application/json", Prefer: "return=minimal"},
-        body: JSON.stringify({photo_path: path, note, barcode})
-      });
-      if (!r.ok) throw new Error("db " + r.status + " " + await r.text());
-      row.className = "ok"; row.textContent = barcode ? "✓ Sent, barcode " + barcode : "⚠ Sent, but barcode NOT read: retake closer";
-    } catch (e) {
-      row.className = "err"; row.textContent = "✗ Failed: " + e.message;
-    }
+async function upload(blob, name) {
+  const r = await fetch(`${URL_}/storage/v1/object/partner-uploads/${name}`, {
+    method: "POST", headers: {...H, "Content-Type": "image/jpeg"}, body: blob
+  });
+  if (!r.ok) throw new Error("upload " + r.status + " " + await r.text());
+}
+
+send.onclick = async () => {
+  const blobs = shots.slice(), bc = barcodeClient;
+  send.disabled = true;
+  const row = document.createElement("div");
+  row.textContent = "Sending…";
+  list.prepend(row);
+  try {
+    const id = crypto.randomUUID();
+    const names = ["front", "barcode", "nutrition"].map(k => `${id}-${k}.jpg`);
+    for (let i = 0; i < 3; i++) await upload(blobs[i], names[i]);
+    let r = await fetch(`${URL_}/rest/v1/partner_products`, {
+      method: "POST", headers: {...H, "Content-Type": "application/json", Prefer: "return=minimal"},
+      body: JSON.stringify({id, front_path: names[0], barcode_path: names[1], nutrition_path: names[2], barcode_client: bc})
+    });
+    if (!r.ok) throw new Error("db " + r.status + " " + await r.text());
+    // reset for the next product right away
+    shots.fill(null); barcodeClient = null;
+    [1, 2, 3].forEach(n => { const b = document.getElementById("b" + n); b.className = ""; b.textContent = b.textContent.replace("✓", "📷"); });
+    row.textContent = "Reading photos…";
+    r = await fetch(`${URL_}/functions/v1/process-partner-product`, {
+      method: "POST", headers: {...H, "Content-Type": "application/json"}, body: JSON.stringify({id})
+    });
+    const j = await r.json();
+    if (j.status === "added") { row.className = "ok"; row.textContent = `✓ Added: ${j.name} (${j.barcode})`; }
+    else if (j.status === "duplicate_kept") { row.className = "ok"; row.textContent = `✓ Already in database: ${j.name} (${j.barcode})`; }
+    else if (j.status === "review") { row.className = "warn"; row.textContent = `⚠ Saved, needs a check: ${(j.problems || []).join("; ")}`; }
+    else { row.className = "err"; row.textContent = "✗ Saved but not read yet: " + (j.problems || [j.error]).join("; "); }
+  } catch (e) {
+    row.className = "err"; row.textContent = "✗ Failed: " + e.message;
+    send.disabled = !shots.every(Boolean);
   }
-  f.value = "";
 };
 </script>
 </body>
