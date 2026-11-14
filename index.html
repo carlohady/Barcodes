@@ -3,28 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Upload product</title>
+<title>Upload</title>
 <style>
   body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px}
-  button{width:100%;font-size:18px;padding:16px;margin:6px 0;box-sizing:border-box}
-  .done{background:#d8f5d8}
-  img{height:40px;vertical-align:middle;margin-left:8px;border-radius:4px}
-  #send{background:#111;color:#fff;margin-top:14px}
-  #send:disabled{background:#999}
+  button{width:100%;font-size:20px;padding:22px;margin:8px 0;box-sizing:border-box;background:#111;color:#fff;border:0;border-radius:12px}
+  button:disabled{background:#999}
   #list div{padding:8px 0;border-bottom:1px solid #ddd}
-  .ok{color:green}.warn{color:#b36b00}.err{color:red}
+  .ok{color:green}.err{color:red}
 </style>
 </head>
 <body>
-<h2>Upload a product</h2>
-<p>Take 3 photos, then Send.</p>
-<input type="file" id="f1" accept="image/*" capture="environment" hidden>
-<input type="file" id="f2" accept="image/*" capture="environment" hidden>
-<input type="file" id="f3" accept="image/*" capture="environment" hidden>
-<button id="b1">1. 📷 Front (product name)</button>
-<button id="b2">2. 📷 Barcode</button>
-<button id="b3">3. 📷 Nutrition facts</button>
-<button id="send" disabled>Send</button>
+<h2>Upload</h2>
+<p>Select the photos in the order taken: front, barcode, nutrition facts. 3 photos per product.</p>
+<input type="file" id="f" accept="image/*" multiple hidden>
+<button id="pick">Upload photos</button>
 <div id="list"></div>
 
 <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
@@ -33,9 +25,6 @@ const URL_ = "https://lnlrvzrvitgnimhldnen.supabase.co";
 const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxubHJ2enJ2aXRnbmltaGxkbmVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMjM4NDYsImV4cCI6MjEwNjc5OTg0Nn0.XjirEPZHLOif_PWJcL3n9rBeqTf8MRZNg1nYv0XyI-0";
 const KEY = "6b18e1c88bbd39f66d98c211";
 const H = {apikey: ANON, Authorization: "Bearer " + ANON, "x-upload-key": KEY};
-
-const shots = [null, null, null];   // resized jpeg blobs
-let barcodeClient = null;
 
 async function toCanvas(file) {
   const bmp = await createImageBitmap(file);
@@ -62,23 +51,6 @@ async function readBarcode(c) {
   } catch (e) { return null; }
 }
 
-const send = document.getElementById("send"), list = document.getElementById("list");
-[1, 2, 3].forEach(n => {
-  const input = document.getElementById("f" + n), btn = document.getElementById("b" + n);
-  const label = btn.textContent;
-  btn.onclick = () => input.click();
-  input.onchange = async () => {
-    if (!input.files[0]) return;
-    const c = await toCanvas(input.files[0]);
-    shots[n - 1] = await blobOf(c);
-    if (n === 2) barcodeClient = await readBarcode(c);
-    btn.className = "done";
-    btn.innerHTML = label.replace("📷", "✓") + '<img src="' + URL.createObjectURL(shots[n - 1]) + '">';
-    send.disabled = !shots.every(Boolean);
-    input.value = "";
-  };
-});
-
 async function upload(blob, name) {
   const r = await fetch(`${URL_}/storage/v1/object/partner-uploads/${name}`, {
     method: "POST", headers: {...H, "Content-Type": "image/jpeg"}, body: blob
@@ -86,29 +58,47 @@ async function upload(blob, name) {
   if (!r.ok) throw new Error("upload " + r.status + " " + await r.text());
 }
 
-send.onclick = async () => {
-  const blobs = shots.slice(), bc = barcodeClient;
-  send.disabled = true;
-  const row = document.createElement("div");
-  row.textContent = "Sending…";
-  list.prepend(row);
-  try {
-    const id = crypto.randomUUID();
-    const names = ["front", "barcode", "nutrition"].map(k => `${id}-${k}.jpg`);
-    for (let i = 0; i < 3; i++) await upload(blobs[i], names[i]);
-    let r = await fetch(`${URL_}/rest/v1/partner_products`, {
-      method: "POST", headers: {...H, "Content-Type": "application/json", Prefer: "return=minimal"},
-      body: JSON.stringify({id, front_path: names[0], barcode_path: names[1], nutrition_path: names[2], barcode_client: bc})
-    });
-    if (!r.ok) throw new Error("db " + r.status + " " + await r.text());
-    // reset for the next product right away
-    shots.fill(null); barcodeClient = null;
-    [1, 2, 3].forEach(n => { const b = document.getElementById("b" + n); b.className = ""; b.textContent = b.textContent.replace("✓", "📷"); });
-    row.className = "ok"; row.textContent = bc ? `✓ Sent (barcode ${bc})` : "✓ Sent (barcode not scanned, photo still saved)";
-  } catch (e) {
-    row.className = "err"; row.textContent = "✗ Failed: " + e.message;
-    send.disabled = !shots.every(Boolean);
+const f = document.getElementById("f"), pick = document.getElementById("pick"), list = document.getElementById("list");
+pick.onclick = () => f.click();
+
+f.onchange = async () => {
+  // oldest photo first = the order they were taken
+  const files = [...f.files].sort((a, b) => a.lastModified - b.lastModified || a.name.localeCompare(b.name));
+  f.value = "";
+  if (!files.length) return;
+  if (files.length % 3 !== 0) {
+    const row = document.createElement("div");
+    row.className = "err";
+    row.textContent = `✗ You selected ${files.length} photos. Select a multiple of 3 (front, barcode, nutrition per product).`;
+    list.prepend(row);
+    return;
   }
+  pick.disabled = true;
+  for (let i = 0; i < files.length; i += 3) {
+    const n = i / 3 + 1, total = files.length / 3;
+    const row = document.createElement("div");
+    row.textContent = `Product ${n}/${total}: uploading…`;
+    list.prepend(row);
+    try {
+      const trio = files.slice(i, i + 3);
+      const canvases = await Promise.all(trio.map(toCanvas));
+      const blobs = await Promise.all(canvases.map(blobOf));
+      const bc = await readBarcode(canvases[1]);
+      const id = crypto.randomUUID();
+      const names = ["front", "barcode", "nutrition"].map(k => `${id}-${k}.jpg`);
+      for (let j = 0; j < 3; j++) await upload(blobs[j], names[j]);
+      const r = await fetch(`${URL_}/rest/v1/partner_products`, {
+        method: "POST", headers: {...H, "Content-Type": "application/json", Prefer: "return=minimal"},
+        body: JSON.stringify({id, front_path: names[0], barcode_path: names[1], nutrition_path: names[2], barcode_client: bc})
+      });
+      if (!r.ok) throw new Error("db " + r.status + " " + await r.text());
+      row.className = "ok";
+      row.textContent = `✓ Product ${n}/${total} sent` + (bc ? ` (barcode ${bc})` : "");
+    } catch (e) {
+      row.className = "err"; row.textContent = `✗ Product ${n}/${total} failed: ` + e.message;
+    }
+  }
+  pick.disabled = false;
 };
 </script>
 </body>
