@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Add product</title>
+<title>Upload product</title>
 <style>
   body{font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:16px}
   button{width:100%;font-size:18px;padding:16px;margin:6px 0;box-sizing:border-box}
@@ -16,7 +16,7 @@
 </style>
 </head>
 <body>
-<h2>Add a product</h2>
+<h2>Upload a product</h2>
 <p>Take 3 photos, then Send.</p>
 <input type="file" id="f1" accept="image/*" capture="environment" hidden>
 <input type="file" id="f2" accept="image/*" capture="environment" hidden>
@@ -104,15 +104,7 @@ send.onclick = async () => {
     // reset for the next product right away
     shots.fill(null); barcodeClient = null;
     [1, 2, 3].forEach(n => { const b = document.getElementById("b" + n); b.className = ""; b.textContent = b.textContent.replace("✓", "📷"); });
-    row.textContent = "Reading photos…";
-    r = await fetch(`${URL_}/functions/v1/process-partner-product`, {
-      method: "POST", headers: {...H, "Content-Type": "application/json"}, body: JSON.stringify({id})
-    });
-    const j = await r.json();
-    if (j.status === "added") { row.className = "ok"; row.textContent = `✓ Added: ${j.name} (${j.barcode})`; }
-    else if (j.status === "duplicate_kept") { row.className = "ok"; row.textContent = `✓ Already in database: ${j.name} (${j.barcode})`; }
-    else if (j.status === "review") { row.className = "warn"; row.textContent = `⚠ Saved, needs a check: ${(j.problems || []).join("; ")}`; }
-    else { row.className = "err"; row.textContent = "✗ Saved but not read yet: " + (j.problems || [j.error]).join("; "); }
+    row.className = "ok"; row.textContent = bc ? `✓ Sent (barcode ${bc})` : "✓ Sent (barcode not scanned, I will read it from the photo)";
   } catch (e) {
     row.className = "err"; row.textContent = "✗ Failed: " + e.message;
     send.disabled = !shots.every(Boolean);
