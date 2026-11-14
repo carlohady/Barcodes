@@ -104,7 +104,7 @@ send.onclick = async () => {
     // reset for the next product right away
     shots.fill(null); barcodeClient = null;
     [1, 2, 3].forEach(n => { const b = document.getElementById("b" + n); b.className = ""; b.textContent = b.textContent.replace("✓", "📷"); });
-    row.className = "ok"; row.textContent = bc ? `✓ Sent (barcode ${bc})` : "✓ Sent (barcode not scanned, I will read it from the photo)";
+    row.className = "ok"; row.textContent = bc ? `✓ Sent (barcode ${bc})` : "✓ Sent (barcode not scanned, photo still saved)";
   } catch (e) {
     row.className = "err"; row.textContent = "✗ Failed: " + e.message;
     send.disabled = !shots.every(Boolean);
